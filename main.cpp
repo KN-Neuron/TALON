@@ -1,10 +1,10 @@
 // Wykrywanie przeszkod i obiektow dla drona (klasyczne CV, monokamera)
 // Kompilacja:
-//    g++ obstacle_detection.cpp -o detector `pkg-config --cflags --libs
-//    opencv4`
+//     g++ obstacle_detection.cpp -o detector `pkg-config --cflags --libs
+//     opencv4`
 // Uruchomienie:
-//    ./detector            (kamera 0)
-//    ESC = wyjscie
+//     ./detector            (kamera 0)
+//     ESC = wyjscie
 
 /*
  * ============================================================================
@@ -74,22 +74,76 @@
  * ============================================================================
  */
 
+#include <cmath>
+#include <cstring>
 #include <iostream>
-#include <opencv2/dnn.hpp>
-#include <opencv2/opencv.hpp>
+#include <iterator>
+#include <opencv2/highgui.hpp>
 #include <string>
 #include <vector>
 
-#include <cmath>
-#include <iostream>
+// Główne nagłówki OpenCV
+#include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
-#include <vector>
-
 // ============================================================================
 // DETEKTOR YOLO (OpenCV DNN)
 // ============================================================================
 
+const std::vector<std::string> COCO_CLASSES = {
+    "person",        "bicycle",      "car",
+    "motorcycle",    "airplane",     "bus",
+    "train",         "truck",        "boat",
+    "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench",        "bird",
+    "cat",           "dog",          "horse",
+    "sheep",         "cow",          "elephant",
+    "bear",          "zebra",        "giraffe",
+    "backpack",      "umbrella",     "handbag",
+    "tie",           "suitcase",     "frisbee",
+    "skis",          "snowboard",    "sports ball",
+    "kite",          "baseball bat", "baseball glove",
+    "skateboard",    "surfboard",    "tennis racket",
+    "bottle",        "wine glass",   "cup",
+    "fork",          "knife",        "spoon",
+    "bowl",          "banana",       "apple",
+    "sandwich",      "orange",       "broccoli",
+    "carrot",        "hot dog",      "pizza",
+    "donut",         "cake",         "chair",
+    "couch",         "potted plant", "bed",
+    "dining table",  "toilet",       "tv",
+    "laptop",        "mouse",        "remote",
+    "keyboard",      "cell phone",   "microwave",
+    "oven",          "toaster",      "sink",
+    "refrigerator",  "book",         "clock",
+    "vase",          "scissors",     "teddy bear",
+    "hair drier",    "toothbrush"};
+
+std::string getClassName(int class_id) {
+  if (class_id >= 0 && class_id < static_cast<int>(COCO_CLASSES.size())) {
+    return COCO_CLASSES[class_id];
+  }
+  return "unknown";
+}
+
+double getRealWidthForClass(int class_id) {
+  switch (class_id) {
+  case 0:
+    return 0.45; // 'person' (jeśli Bounding Box łapie tylko głowę/twarz) ->
+                 // ok.
+                 // 20 cm
+  // case 0: return 0.45; // 'person' (jeśli Bounding Box łapie całe popiersie z
+  // ramionami) -> ok. 45 cm
+  case 39:
+    return 0.07;
+  case 66:
+    return 0.15; // 'remote' / małe przedmioty
+  case 73:
+    return 0.25; // 'clock' (zegar na ścianie) -> np. 25 cm
+  default:
+    return 0.30;
+  }
+}
 // Struktura na wynik detekcji
 struct Detection {
   int class_id;
@@ -194,10 +248,14 @@ public:
 class KalmanFilter2D {
 private:
   cv::Matx21d x_hat; // Wektor stanu [Z, Z_dot]^T
-  cv::Matx22d P;     // Kowariancja błędu
-  cv::Matx22d Q;     // Szum procesu (fizyki)
-  cv::Matx12d H;     // Macierz obserwacji [1, 0]
-  double R;          // Szum pomiarowy kamery
+  cv::Matx22d P;
+  // Kowariancja błędu
+  cv::Matx22d Q;
+  // Szum procesu (fizyki)
+  cv::Matx12d H;
+  // Macierz obserwacji [1, 0]
+  double R;
+  // Szum pomiarowy kamery
 
   bool initialized;
 
@@ -273,14 +331,23 @@ public:
   double getZDot() const { return x_hat(1, 0); }
 };
 
+struct TrackedObject {
+  int id;
+  int class_id;
+  KalmanFilter2D kalman;
+  int time_since_update;
+};
+
 // ============================================================================
 // 2. GEOMETRIA 3D I SIATKA ZAJĘTOŚCI (BEV)
 // ============================================================================
 class OccupancyGrid2D {
 private:
   static constexpr int GRID_SIZE = 100; // 100x100 komórek
-  double cell_size;                     // 0.1m (10cm) na komórkę
-  double max_range;                     // max 10 metrów przed dronem
+  double cell_size;
+  // 0.1m (10cm) na komórkę
+  double max_range;
+  // max 10 metrów przed dronem
   int grid[GRID_SIZE][GRID_SIZE];
 
 public:
@@ -338,10 +405,10 @@ inline double calculateDepth(double fx, double realWidth, double bboxWidth) {
 // świecie rzeczywistym. u to środek bounding boxa na ekranie (np. u = 450px) cx
 // to środek optyczny macierzy kamery (zazwyczaj połowa szerokości kadru, np.
 // 640x480 -> 320px) u - cx to odległość przeszkody od środka kadru w pikselach:
-//   - jeśli u = 320 (środek), to u - cx = 0 => X = 0 (obiekt leci wprost na
-//   drona)
-//   - jeśli obiekt jest z prawej (u = 500), to u - cx = 180px => X > 0 (obiekt
-//   po prawej)
+//    - jeśli u = 320 (środek), to u - cx = 0 => X = 0 (obiekt leci wprost na
+//    drona)
+//    - jeśli obiekt jest z prawej (u = 500), to u - cx = 180px => X > 0 (obiekt
+//    po prawej)
 // (Współrzędna w metrach X / głębia w metrach Z) = (odchylenie w pikselach (u -
 // c_x)) / ogniskowa w pikselach. Przekształcenie tego wzoru daje funkcję
 // poniżej:
@@ -366,7 +433,7 @@ inline double calculateTTC(double Z, double Z_dot) {
 // odwraca wzór: f_x = (Z_znane * w) / W_znane
 
 struct CameraParams {
-  double h_fov_deg = 65.0; // Domyślny kąt widzenia większości webcamów/dronów
+  double h_fov_deg = 60.0; // Domyślny kąt widzenia większości webcamów/dronów
   double fx = 500.0;
   double cx = 320.0;
 
@@ -385,17 +452,19 @@ struct Config {
   int width = 640;
   int height = 480;
   double minArea = 700.0;
-  double fx = 500.0;      // Ogniskowa kamery w px (przykładowa kalibracja)
-  double cx = 320.0;      // Środek optyczny (width / 2)
+  double fx = 500.0;
+  // Ogniskowa kamery w px (przykładowa kalibracja)
+  double cx = 320.0;
+  // Środek optyczny (width / 2)
   double realWidth = 0.5; // Szacowana szerokość przeszkody w metrach (50 cm)
 };
 
 // Ogniskowa reprezentuje stosunek fizycznej ogniskowej soczewki f do fizycznego
 // rozmiaru pojedynczego piksela matrycy d_x: f_x = f / d_x.
 // Macierz kalibracji K:
-//   [f_x  0   c_x]
-//   [ 0  f_y  c_y]
-//   [ 0   0    1 ]
+//    [f_x  0   c_x]
+//    [ 0  f_y  c_y]
+//    [ 0   0    1 ]
 // c_x, c_y to optyczny środek matrycy.
 // f_x, f_y to ogniskowe w osi X i Y wyrażone w pikselach.
 //
@@ -411,19 +480,25 @@ int main() {
     return -1;
   }
 
+  std::string modelPath = "yolov8n.onnx";
+  YoloDetector detector(modelPath);
+
   cap.set(cv::CAP_PROP_FRAME_WIDTH, cfg.width);
   cap.set(cv::CAP_PROP_FRAME_HEIGHT, cfg.height);
 
-  KalmanFilter2D kalman;
   OccupancyGrid2D grid(0.1, 10.0); // 10cm/komórka, zasięg 10m
 
-  cv::Mat frame, gray, edges;
-  std::vector<std::vector<cv::Point>> contours;
+  // 1. GLOBALNY WEKTOR ŚLEDZONYCH OBIEKTÓW (Musi być POZA pętlą while!)
+  std::vector<TrackedObject> tracked_objects;
+  int next_unique_id = 1; // Licznik unikalnych ID (1, 2, 3...)
 
+  cv::Mat frame;
   int64 tPrev = cv::getTickCount();
+  CameraParams camera;
 
+  camera.updateResolution(cfg.width, cfg.height);
+  cv::namedWindow("Podglad Drona", cv::WINDOW_AUTOSIZE);
   while (true) {
-    // Obliczenie czystego delta_t dla Filtra Kalmana
     int64 tNow = cv::getTickCount();
     double dt = (tNow - tPrev) / cv::getTickFrequency();
     tPrev = tNow;
@@ -432,111 +507,135 @@ int main() {
     if (frame.empty())
       continue;
 
-    // 1. Predykcja fizyki w Kalmanie (Project)
-    kalman.predict(dt);
+    std::string current_info_to_log = "";
+
+    // A. DETEKCJA YOLO
+    auto detections = detector.detect(frame);
     grid.clear();
 
-    // Wstępny pre-processing obrazu
-    cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-    cv::GaussianBlur(gray, gray, cv::Size(3, 3), 0);
-    cv::Canny(gray, edges, 50, 150);
-    cv::findContours(edges, contours, cv::RETR_EXTERNAL,
-                     cv::CHAIN_APPROX_SIMPLE);
-
-    double minDistanceInFrame = 999.0;
-    bool detectedAny = false;
-
-    for (const auto &c : contours) {
-      if (cv::contourArea(c) < cfg.minArea)
-        continue;
-
-      cv::Rect box = cv::boundingRect(c);
-
-      if (box.height == 0)
-        continue;
-
-      double aspectRatio = static_cast<double>(box.width) / box.height;
-
-      double minAR = 0.5;
-      double maxAR = 1.2;
-      if (aspectRatio < minAR || aspectRatio > maxAR) {
-        continue;
-      }
-
-      detectedAny = true;
-
-      // 2. Pomiar z kamery (model otworkowy)
-      double z_raw =
-          PerceptionMath::calculateDepth(cfg.fx, cfg.realWidth, box.width);
-
-      // 3. Update stanu w Kalmanie
-      kalman.update(z_raw);
-
-      double z_filtered = kalman.getZ();
-      double z_dot = kalman.getZDot();
-      double ttc = PerceptionMath::calculateTTC(z_filtered, z_dot);
-
-      // Wyznaczenie pozycji X w układzie BEV
-      double u = box.x + (box.width / 2.0);
-      double x_pos = PerceptionMath::calculateX(u, cfg.cx, z_filtered, cfg.fx);
-
-      if (z_filtered < minDistanceInFrame) {
-        minDistanceInFrame = z_filtered;
-      }
-
-      // Naniesienie przeszkody na siatkę zajętości
-      grid.insertObstacle(x_pos, z_filtered);
-
-      // Wizualizacja na obrazie
-      cv::rectangle(frame, box, cv::Scalar(0, 255, 0), 2);
-      std::string info = cv::format("Z: %.2fm | TTC: %.1fs", z_filtered, ttc);
-      cv::putText(frame, info, cv::Point(box.x, box.y - 10),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+    // B. PREDIKCJA FIZYKI DLA WSZYSTKICH ISTNIEJĄCYCH OBIEKTÓW
+    for (auto &obj : tracked_objects) {
+      obj.kalman.predict(dt);
+      obj.time_since_update++; // Zwiększamy licznik klatek braku detekcji
     }
 
-    // Renderowanie podglądu siatki BEV
+    // C. ASOCJACJA DANYCH I AKTUALIZACJA (Pętla po nowych detekcjach z YOLO)
+    for (const auto &det : detections) {
+
+      double w_real = getRealWidthForClass(det.class_id);
+      double z_raw =
+          PerceptionMath::calculateDepth(camera.fx, w_real, det.box.width);
+
+      double u = det.box.x + (det.box.width / 2.0);
+      double x_raw = PerceptionMath::calculateX(u, camera.cx, z_raw, camera.fx);
+
+      // Szukamy najbliższego istniejącego obiektu (Najbliższy Sąsiad)
+      int best_match_idx = -1;
+      double min_dist = 999.0;
+
+      for (size_t i = 0; i < tracked_objects.size(); ++i) {
+        // Porównujemy tylko obiekty tej samej klasy!
+        if (tracked_objects[i].class_id == det.class_id) {
+          double pred_z = tracked_objects[i].kalman.getZ();
+          double pred_x =
+              PerceptionMath::calculateX(u, camera.cx, pred_z, camera.fx);
+
+          // Euklidesowa odległość w przestrzeni 2D (X, Z)
+          double dist = std::sqrt(std::pow(x_raw - pred_x, 2) +
+                                  std::pow(z_raw - pred_z, 2));
+
+          if (dist < min_dist) {
+            min_dist = dist;
+            best_match_idx = static_cast<int>(i);
+          }
+        }
+      }
+
+      // Progowanie: czy najbliższy obiekt jest dostatecznie blisko? (np.
+      // < 1.0m)
+      double MATCH_THRESHOLD = 1.0; // metry
+
+      if (best_match_idx != -1 && min_dist < MATCH_THRESHOLD) {
+        // [SCENARIUSZ 1]: ZNALEZIONO DOPASOWANIE -> Aktualizujemy istniejący
+        // obiekt
+        auto &obj = tracked_objects[best_match_idx];
+        obj.kalman.update(z_raw);
+        obj.time_since_update = 0; // Resetujemy licznik braku detekcji
+
+      } else {
+        // [SCENARIUSZ 2]: BRAK DOPASOWANIA -> Tworzymy nowy obiekt z własnym
+        // Kalmanem!
+        TrackedObject new_obj;
+        new_obj.id = next_unique_id++;
+        new_obj.class_id = det.class_id;
+        new_obj.time_since_update = 0;
+        new_obj.kalman.init(z_raw); // Inicjalizacja nowej instancji Kalmana
+
+        tracked_objects.push_back(new_obj);
+      }
+    }
+
+    // D. USUWANIE STARYCH OBIEKTÓW (Które zniknęły z kadru na dłużej niż 10
+    // klatek)
+    int MAX_LOST_FRAMES = 10;
+    tracked_objects.erase(
+        std::remove_if(tracked_objects.begin(), tracked_objects.end(),
+                       [MAX_LOST_FRAMES](const TrackedObject &obj) {
+                         return obj.time_since_update > MAX_LOST_FRAMES;
+                       }),
+        tracked_objects.end());
+
+    // E. RENDEROWANIE I WIZUALIZACJA DLA WSZYSTKICH AKTYWNYCH OBIEKTÓW
+    for (const auto &det : detections) {
+      // Znajdujemy przypisany obiekt do narysowania
+      for (const auto &obj : tracked_objects) {
+        // dałem klase 39 bo chce mieć tylko butelki zamiast setek green boxów w
+        // tle
+        if (obj.class_id == det.class_id && obj.time_since_update == 0 &&
+            obj.class_id == 39) {
+          double z_filtered = obj.kalman.getZ();
+          double z_dot = obj.kalman.getZDot();
+          double ttc = PerceptionMath::calculateTTC(z_filtered, z_dot);
+
+          double u = det.box.x + (det.box.width / 2.0);
+          double x_pos =
+              PerceptionMath::calculateX(u, camera.cx, z_filtered, camera.fx);
+
+          // Nanosimy na siatkę BEV
+          grid.insertObstacle(x_pos, z_filtered);
+
+          // Rysowanie informacji na ekranie BGR
+          std::string className = getClassName(obj.class_id);
+          auto box_width = det.box.width;
+          auto box_heigth = det.box.height;
+          std::string info = cv::format(
+              "ID %d: %s | Z: %.2fm | TTC: %.1fs | Size: %dx:%dpx", obj.id,
+              className.c_str(), z_filtered, ttc, box_width, box_heigth);
+
+          current_info_to_log = info;
+
+          cv::rectangle(frame, det.box, cv::Scalar(0, 255, 0), 2);
+          cv::putText(frame, info, cv::Point(det.box.x, det.box.y - 10),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+        }
+      }
+    }
+
+    // Wyświetlenie okien
     cv::Mat bevMat = grid.render();
     cv::imshow("Podglad Drona", frame);
     cv::imshow("Siatka Zajetosci (BEV)", bevMat);
 
-    if (cv::waitKey(1) == 27)
-      break; // ESC
-  }
+    int key = cv::waitKey(1);
 
-  return 0;
-}
-int main_yolo() {
-  std::string modelPath = "yolov8n.onnx";
+    if (key == 32) { // Klawisz SPACJA
+      if (!current_info_to_log.empty()) {
+        std::cout << "[LOG] " << current_info_to_log << std::endl;
+      }
 
-  YoloDetector detector(modelPath);
-
-  cv::VideoCapture cap(0); // Otwarcie kamery 0
-  if (!cap.isOpened()) {
-    std::cerr << "Błąd otwarcia kamery!\n";
-    return -1;
-  }
-
-  cv::Mat frame;
-  while (true) {
-    cap >> frame;
-    if (frame.empty())
+    } else if (key == 27) { // Klawisz ESC
       break;
-
-    // Wywołanie detekcji
-    auto detections = detector.detect(frame);
-
-    // Rysowanie wyników na ekranie
-    for (const auto &det : detections) {
-      cv::rectangle(frame, det.box, cv::Scalar(0, 255, 0), 2);
-      std::string label =
-          cv::format("Class %d: %.2f", det.class_id, det.confidence);
-      cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 5),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
     }
-
-    cv::imshow("YOLO OpenCV C++ Test", frame);
-    if (cv::waitKey(1) == 27)
-      break; // ESC
   }
 
   return 0;
