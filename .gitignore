@@ -1,0 +1,148 @@
+# =========================================================
+#  TALON — .gitignore
+#  Zasada: do repo trafia tylko kod, konfiguracja i dokumentacja.
+#  Wszystko, co da sie odtworzyc, pobrac lub co jest prywatne — nie.
+# =========================================================
+
+# --- Build / artefakty kompilacji -------------------------
+build/
+build-*/
+cmake-build-*/
+bin/
+lib/
+out/
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.d
+*.gch
+*.pch
+
+# CMake (gdyby ktos konfigurowal w korzeniu)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+_deps/
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# Cache narzedzi (clangd, ccache, cmake-tools)
+.cache/
+.ccache/
+
+# --- Sekrety i konfiguracja lokalna -----------------------
+# Nigdy nie commituj kluczy, tokenow ani danych dostepowych.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+secrets.*
+credentials.*
+*_secret*
+*_token*
+config.local.*
+
+# Lokalna konfiguracja uruchomieniowa (wzorzec config.example.env jest sledzony).
+config.env
+
+# --- Modele / wagi sieci (duze, pobierane osobno) ---------
+models/
+*.pt
+*.pth
+*.onnx
+*.weights
+*.caffemodel
+*.tflite
+*.pb
+*.engine
+*.bin
+
+# --- Dane testowe, nagrania i wyniki ----------------------
+# Katalogi na dane wejsciowe/wyjsciowe — ignorowane w calosci.
+assets/
+data/
+datasets/
+output/
+results/
+recordings/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.bag
+
+# Luzne obrazy w korzeniu projektu (dumpy z eksperymentow).
+# Uwaga: reguly sa zakotwiczone przez '/', wiec dotycza TYLKO korzenia.
+# Dzieki temu docs/diagram.png czy classifiers/*.xml wchodza normalnie.
+/*.jpg
+/*.jpeg
+/*.png
+/*.bmp
+/*.tiff
+/*.webp
+
+# --- Zaleznosci zewnetrzne --------------------------------
+vendor/
+third_party/
+external/
+node_modules/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+
+# --- Python (skrypty pomocnicze, eksport modeli) ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Edytory / IDE ----------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+.vs/
+*.user
+
+# --- System operacyjny ------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# --- Logi i pliki tymczasowe ------------------------------
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+core
+core.*
+crash-*
