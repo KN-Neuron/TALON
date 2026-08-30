@@ -1,0 +1,36 @@
+# IDE - JetBrains
+.idea/
+
+# IDE - VSCode
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+
+# Editor swap/project files
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node / frontend
+node_modules
+dist
+dist-ssr
+*.local
+
+# Python
+.venv
+__pycache__/
+*.pyc

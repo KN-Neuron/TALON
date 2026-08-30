@@ -1,0 +1,112 @@
+.page {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.title {
+  margin: 0;
+}
+
+.camera-select-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.camera-select {
+  width: 100%;
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #cccccc;
+  background: #ffffff;
+  color: #111111;
+}
+
+button {
+  font: inherit;
+  padding: 10px 24px;
+  border-radius: 6px;
+  border: 1px solid #cccccc;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #999999;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.refresh-button {
+  background: transparent;
+}
+
+.error {
+  color: #cc0000;
+  margin: 0;
+}
+
+.stream-page {
+  position: relative;
+  width: 100vw;
+  height: 100svh;
+  background: #000000;
+  overflow: hidden;
+}
+
+.fullscreen-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000000;
+}
+
+.connecting-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  color: #ffffff;
+  font-size: 18px;
+}
+
+.disconnect-button {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: Impact, 'Anton', 'Arial Narrow Bold', sans-serif;
+  font-size: 28px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #ffffff;
+  -webkit-text-stroke: 2px #000000;
+  text-shadow:
+    -2px -2px 0 #000000,
+    2px -2px 0 #000000,
+    -2px 2px 0 #000000,
+    2px 2px 0 #000000;
+}
+
+.disconnect-button:hover {
+  opacity: 0.85;
+}
