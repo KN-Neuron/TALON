@@ -1,0 +1,48 @@
+package relay
+
+import (
+	"errors"
+	"io"
+	"log"
+
+	"github.com/pion/webrtc/v4"
+)
+
+func (relay *Relay) attachPublisherHandlers(pc *webrtc.PeerConnection, as *activeStream) {
+	pc.OnTrack(func(remote *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		local, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, remote.Kind().String(), string(as.id))
+		if err != nil {
+			log.Printf("relay: stream %s: create local track: %v", as.id, err)
+			return
+		}
+
+		as.mu.Lock()
+		as.localTracks[remote.Kind()] = local
+		as.publisherSSRC[remote.Kind()] = remote.SSRC()
+		as.mu.Unlock()
+		as.readyOnce.Do(func() { close(as.ready) })
+
+		relay.fanOut(remote, local, as)
+	})
+
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {
+			relay.hub.removeStream(as.id)
+		}
+	})
+}
+
+func (relay *Relay) fanOut(remote *webrtc.TrackRemote, local *webrtc.TrackLocalStaticRTP, as *activeStream) {
+	for {
+		packet, _, err := remote.ReadRTP()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				log.Printf("relay: stream %s: read RTP: %v", as.id, err)
+			}
+			return
+		}
+		if err := local.WriteRTP(packet); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			log.Printf("relay: stream %s: write RTP: %v", as.id, err)
+		}
+	}
+}
