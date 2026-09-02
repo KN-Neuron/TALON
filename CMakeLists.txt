@@ -10,6 +10,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(OpenCV REQUIRED)
 
-add_executable(testcv main.cpp)
+add_executable(testcv
+  src/main.cpp
+  src/YoloDetector.cpp
+  src/KalmanFilter2D.cpp
+  src/OccupancyGrid2D.cpp
+)
+
 target_link_libraries(testcv PRIVATE ${OpenCV_LIBS})
-target_include_directories(testcv PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_include_directories(testcv PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)

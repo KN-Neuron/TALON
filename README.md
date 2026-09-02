@@ -139,24 +139,24 @@ Egzekwowane przez `run.sh`:
 | `BUILD_TYPE` | `Release` | `Release` lub `Debug`. |
 | `CMAKE_EXTRA_ARGS` | — | Dodatkowe flagi dla CMake. |
 
-### [B] Wymagają edycji `main.cpp`
+### [B] Wymagają edycji kodu
 
-**`main.cpp` nie czyta żadnego pliku konfiguracyjnego** — wartości są zaszyte
+**Kod nie czyta żadnego pliku konfiguracyjnego** — wartości są zaszyte
 jako domyślne pól w strukturach C++. Te parametry są w `config.env` opisane
 wraz z **dokładnym numerem linii** do zmiany, a `run.sh` ostrzeże, jeśli
 ustawisz je licząc na natychmiastowy efekt:
 
 | Parametr | Domyślnie | Gdzie w kodzie |
 | --- | --- | --- |
-| Indeks kamery | `0` | `main.cpp:451` |
-| Rozdzielczość | `640x480` | `main.cpp:452-453` |
-| Kąt widzenia (FOV) | `60.0°` | `main.cpp:436` |
-| Próg pewności YOLO | `0.45` | `main.cpp:158` |
-| Próg NMS | `0.45` | `main.cpp:159` |
-| Próg kojarzenia obiektów | `1.0 m` | `main.cpp:556` |
-| Domyślna szerokość obiektu | `0.30 m` | `main.cpp:144` |
-| Minimalne pole konturu | `700 px²` | `main.cpp:454` |
-| Siatka zajętości | `0.1 m / 10 m` | `main.cpp:489` |
+| Indeks kamery | `0` | `include/Config.hpp:31` |
+| Rozdzielczość | `640x480` | `include/Config.hpp:32-33` |
+| Kąt widzenia (FOV) | `60.0°` | `include/Config.hpp:16` |
+| Próg pewności YOLO | `0.45` | `include/YoloDetector.hpp:59` |
+| Próg NMS | `0.45` | `include/YoloDetector.hpp:60` |
+| Próg kojarzenia obiektów | `1.0 m` | `src/main.cpp:110` |
+| Domyślna szerokość obiektu | `0.30 m` | `src/YoloDetector.cpp:27` |
+| Minimalne pole konturu | `700 px²` | `include/Config.hpp:34` |
+| Siatka zajętości | `0.1 m / 10 m` | `src/main.cpp:43` |
 
 ---
 
@@ -174,7 +174,7 @@ mv yolov8n.onnx models/
 Wymagany jest format **ONNX**. Pliki `.pt` to wagi PyTorch, których OpenCV DNN
 nie wczyta — `run.sh` odmówi uruchomienia i o tym przypomni.
 
-> **Uwaga:** program ładuje model ścieżką względną (`main.cpp:483`), dlatego
+> **Uwaga:** program ładuje model ścieżką względną (`src/main.cpp:37`), dlatego
 > `run.sh` uruchamia binarkę z katalogu `models/`. Uruchamiając ręcznie:
 > `cd models && ../build/testcv`.
 
@@ -188,12 +188,25 @@ TALON/
 ├── config.env          # twoja konfiguracja (ignorowana przez git)
 ├── config.example.env  # wzorzec konfiguracji (w repo)
 ├── CMakeLists.txt
-├── main.cpp            # całość logiki: YOLO, geometria, Kalman, BEV
-├── include/            # nagłówki pomocnicze
+├── include/
+│   ├── YoloDetector.hpp     # detekcja YOLO + klasy COCO
+│   ├── KalmanFilter2D.hpp   # filtr Kalmana + TrackedObject
+│   ├── OccupancyGrid2D.hpp  # siatka zajętości (BEV)
+│   ├── PerceptionMath.hpp   # geometria: głębia, X, TTC (header-only)
+│   └── Config.hpp           # Config + CameraParams (header-only)
+├── src/
+│   ├── main.cpp             # pętla główna: detekcja → tracking → render
+│   ├── YoloDetector.cpp
+│   ├── KalmanFilter2D.cpp
+│   └── OccupancyGrid2D.cpp
 ├── models/             # wagi ONNX — pobierane osobno
 ├── assets/             # obrazy testowe i wyniki
 └── classifiers/        # kaskady Haara
 ```
+
+`PerceptionMath.hpp` i `Config.hpp` nie mają odpowiedników `.cpp` — zawierają
+wyłącznie funkcje `inline` i struktury danych, więc implementacja jest w
+nagłówku.
 
 ---
 
@@ -203,9 +216,6 @@ Uczciwa lista ograniczeń — to projekt badawczy, nie gotowy produkt.
 
 ### Struktura kodu
 
-- **Wszystko siedzi w jednym `main.cpp`** (~700 linii). Detektor YOLO, filtr
-  Kalmana, siatka zajętości i pętla główna to osobne odpowiedzialności, które
-  normalnie rozdzieliłoby się na pliki w `include/` i `src/`.
 - **Brak wczytywania konfiguracji w kodzie** — dlatego `config.env` obsługuje
   tylko parametry środowiskowe. Dodanie prostego parsera lub `cv::FileStorage`
   odblokowałoby całą sekcję [B] bez rekompilacji.
@@ -234,7 +244,7 @@ Uczciwa lista ograniczeń — to projekt badawczy, nie gotowy produkt.
   testów natychmiast, bo nie zależą od kamery.
 - **Brak CI** — nic nie weryfikuje, czy projekt kompiluje się na Linuksie.
 - **Tylko CPU** — ścieżka CUDA jest w kodzie, ale zakomentowana
-  (`main.cpp:166-167`).
+  (`src/YoloDetector.cpp:36-37`).
 
 ---
 
