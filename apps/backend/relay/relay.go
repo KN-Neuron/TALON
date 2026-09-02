@@ -54,11 +54,13 @@ func (relay *Relay) Publish(ctx context.Context, id stream.ID, offerSDP string) 
 		return stream.Session{}, "", stream.ErrAlreadyPublishing
 	}
 	as := &activeStream{
-		id:            id,
-		localTracks:   make(map[webrtc.RTPCodecType]*webrtc.TrackLocalStaticRTP),
-		publisherSSRC: make(map[webrtc.RTPCodecType]webrtc.SSRC),
-		subscribers:   make(map[stream.SessionID]*webrtc.PeerConnection),
-		ready:         make(chan struct{}),
+		id:              id,
+		localTracks:     make(map[webrtc.RTPCodecType]*webrtc.TrackLocalStaticRTP),
+		publisherSSRC:   make(map[webrtc.RTPCodecType]webrtc.SSRC),
+		subscribers:     make(map[stream.SessionID]*webrtc.PeerConnection),
+		dataSubscribers: make(map[stream.SessionID]*webrtc.DataChannel),
+		ready:           make(chan struct{}),
+		pending:         true,
 	}
 	relay.hub.streams[id] = as
 	relay.hub.mu.Unlock()
@@ -77,6 +79,10 @@ func (relay *Relay) Publish(ctx context.Context, id stream.ID, offerSDP string) 
 		relay.hub.removeStream(id)
 		return stream.Session{}, "", err
 	}
+
+	as.mu.Lock()
+	as.pending = false
+	as.mu.Unlock()
 
 	sessionID := stream.SessionID(uuid.NewString())
 	relay.hub.mu.Lock()
@@ -126,8 +132,13 @@ func (relay *Relay) Subscribe(ctx context.Context, id stream.ID, offerSDP string
 	sessionID := stream.SessionID(uuid.NewString())
 	relay.attachSubscriberHandlers(pc, sessionID, id, as)
 
+	// Registered before negotiation so a channel offered by the subscriber is
+	// picked up as soon as it opens.
+	relay.acceptDetectionsChannel(pc, sessionID, as)
+
 	answer, err := negotiate(pc, offerSDP)
 	if err != nil {
+		as.removeDataSubscriber(sessionID)
 		_ = pc.Close()
 		return stream.Session{}, "", err
 	}
@@ -170,7 +181,13 @@ func (relay *Relay) List(ctx context.Context) ([]stream.ID, error) {
 	defer relay.hub.mu.RUnlock()
 
 	ids := make([]stream.ID, 0, len(relay.hub.streams))
-	for id := range relay.hub.streams {
+	for id, as := range relay.hub.streams {
+		as.mu.Lock()
+		pending := as.pending
+		as.mu.Unlock()
+		if pending {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	return ids, nil

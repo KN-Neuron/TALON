@@ -68,11 +68,76 @@ button:disabled {
   overflow: hidden;
 }
 
+.video-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .fullscreen-video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /*
+   * `contain`, not `cover`: the overlay maps detection pixels onto the painted
+   * video area, and `cover` would crop it, putting every box out of register.
+   */
+  object-fit: contain;
   background: #000000;
+}
+
+.detection-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  /* The overlay is decoration; clicks belong to the controls beneath it. */
+  pointer-events: none;
+}
+
+.telemetry-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 16px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: rgba(11, 18, 32, 0.75);
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  backdrop-filter: blur(4px);
+}
+
+.telemetry-panel strong {
+  color: #38bdf8;
+}
+
+.telemetry-idle {
+  opacity: 0.7;
+}
+
+.stream-controls {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mode-button {
+  background: rgba(11, 18, 32, 0.75);
+  border: 1px solid rgba(226, 232, 240, 0.35);
+  color: #e2e8f0;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.mode-button:hover {
+  border-color: rgba(226, 232, 240, 0.7);
 }
 
 .connecting-label {
@@ -86,9 +151,6 @@ button:disabled {
 }
 
 .disconnect-button {
-  position: absolute;
-  top: 16px;
-  left: 16px;
   background: transparent;
   border: none;
   padding: 4px 8px;

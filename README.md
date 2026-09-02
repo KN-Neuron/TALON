@@ -69,3 +69,22 @@ npm run dev
 Open the printed URL, pick a camera, click Connect.
 
 Each app defaults to `http://localhost:8080` for the backend - override with `BACKEND_ADDR`, `BACKEND_URL`, or `VITE_BACKEND_URL` if needed.
+
+## 4. Detections (optional)
+
+The client forwards per-frame detection metadata from the perception process
+alongside the video. Until the C++ perception process on the edge device is
+wired in, a mock producer supplies the same schema:
+
+```
+cd apps/client
+uv run mock_perception.py
+```
+
+Boxes and time-to-collision labels then appear over the video. Toggle
+"Raw video" in the viewer (or append `?raw=1`) to subscribe to the video alone.
+
+Set `ENABLE_DETECTIONS=false` to have the client publish video only.
+
+- Wire format: [docs/detection-protocol.md](docs/detection-protocol.md)
+- Writing a consumer: [docs/consuming-streams.md](docs/consuming-streams.md)

@@ -25,6 +25,18 @@ func (relay *Relay) attachPublisherHandlers(pc *webrtc.PeerConnection, as *activ
 		relay.fanOut(remote, local, as)
 	})
 
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != DetectionsChannelLabel {
+			log.Printf("relay: stream %s: ignoring data channel %q", as.id, dc.Label())
+			return
+		}
+
+		log.Printf("relay: stream %s: publisher opened %q channel", as.id, dc.Label())
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			as.broadcastDetections(msg.Data)
+		})
+	})
+
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {
 			relay.hub.removeStream(as.id)

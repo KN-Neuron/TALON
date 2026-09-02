@@ -13,6 +13,31 @@ const (
 	keyframeRetryInterval = 300 * time.Millisecond
 )
 
+// DetectionsChannelLabel is the data channel carrying per-frame detection
+// metadata. Publishers open it; subscribers receive a mirrored channel.
+const DetectionsChannelLabel = "detections"
+
+// acceptDetectionsChannel registers the subscriber's detections channel for
+// fan-out once the subscriber opens it.
+//
+// The subscriber, not the relay, creates this channel. A data channel only
+// exists if the SDP carries an `m=application` section, and that section is
+// present only when the *offering* side declares it. Since subscribers offer
+// and the relay answers, a channel created here would never negotiate SCTP and
+// would sit in "connecting" forever.
+//
+// Subscribers should create it unordered with no retransmits: a detection that
+// arrives late has already been superseded, so retransmitting only adds
+// latency.
+func (relay *Relay) acceptDetectionsChannel(pc *webrtc.PeerConnection, sessionID stream.SessionID, as *activeStream) {
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != DetectionsChannelLabel {
+			return
+		}
+		as.addDataSubscriber(sessionID, dc)
+	})
+}
+
 func (relay *Relay) attachSubscriberHandlers(pc *webrtc.PeerConnection, sessionID stream.SessionID, streamID stream.ID, as *activeStream) {
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {

@@ -12,6 +12,18 @@ class Settings(BaseSettings):
     stream_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     camera_index: int = 0
 
+    detection_socket_path: str = Field(
+        default="/tmp/talon-detections.sock",
+        description="Unix socket the perception process writes detection frames to",
+    )
+    enable_detections: bool = Field(
+        default=True,
+        description="Forward detection frames alongside video",
+    )
+
+    reconnect_initial_delay_s: float = 1.0
+    reconnect_max_delay_s: float = 15.0
+
     @field_validator("backend_url")
     @classmethod
     def strip_trailing_slash(cls, value: str) -> str:
