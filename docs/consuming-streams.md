@@ -79,6 +79,21 @@ Subscribe as above and ignore the video track. Video still flows, so this saves
 no bandwidth -- it is only worth doing if the consumer genuinely has no use for
 pixels. There is no metadata-only subscription mode.
 
+## Frames straight from the perception module
+
+Everything above consumes the *relayed* stream over the network. A process on
+the same machine as the drone's perception module can skip the relay entirely
+and read frames out of shared memory, before they are ever encoded.
+
+That path is documented in the perception module's own README (the repository
+root, section "Udostępnianie klatek"). In short: the module publishes
+`/talon.raw` and `/talon.annotated` as POSIX shared memory segments, and
+`apps/client/frame_shm.py` is a working reader.
+
+Use it when you are on the device and want the pixels without encode/decode
+latency. Use WHEP, as described above, for anything off the device -- shared
+memory does not cross the network.
+
 ## Non-browser consumers
 
 The relay speaks standard WHEP; anything that speaks WebRTC works. With

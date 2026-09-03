@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from aiortc import RTCPeerConnection
 from loguru import logger
 
-from camera import Camera
+from camera import VideoSource, open_video_source
 from detection_publisher import DetectionPublisher, create_detections_channel
 from detection_source import DetectionSource
 from settings import Settings, get_settings
@@ -37,11 +37,11 @@ async def _wait_for_disconnect(pc: RTCPeerConnection) -> str:
     return final_state
 
 
-async def _run_session(settings: Settings, camera: Camera) -> None:
+async def _run_session(settings: Settings, video: VideoSource) -> None:
     """Publishes video (and detections) until the connection drops."""
     async with peer_connection() as pc:
         # A fresh track per session: tracks cannot outlive their peer connection.
-        pc.addTrack(camera.track())
+        pc.addTrack(video.track())
 
         detection_task: asyncio.Task | None = None
         detection_source: DetectionSource | None = None
@@ -77,10 +77,13 @@ async def main() -> None:
     settings = get_settings()
     delay = settings.reconnect_initial_delay_s
 
-    with Camera(settings.camera_index) as camera:
+    video = open_video_source(
+        settings.video_source, settings.frame_stream, settings.camera_index
+    )
+    with video:
         while True:
             try:
-                await _run_session(settings, camera)
+                await _run_session(settings, video)
                 # A clean return still means the session ended; reconnect.
                 delay = settings.reconnect_initial_delay_s
             except asyncio.CancelledError:
