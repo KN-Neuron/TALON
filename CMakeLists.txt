@@ -16,6 +16,7 @@ add_executable(testcv
   src/KalmanFilter2D.cpp
   src/OccupancyGrid2D.cpp
   src/DetectionPublisher.cpp
+  src/FrameServer.cpp
 )
 
 target_link_libraries(testcv PRIVATE ${OpenCV_LIBS})

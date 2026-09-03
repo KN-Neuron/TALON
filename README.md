@@ -189,16 +189,22 @@ TALON/
 ├── config.example.env  # wzorzec konfiguracji (w repo)
 ├── CMakeLists.txt
 ├── include/
-│   ├── YoloDetector.hpp     # detekcja YOLO + klasy COCO
-│   ├── KalmanFilter2D.hpp   # filtr Kalmana + TrackedObject
-│   ├── OccupancyGrid2D.hpp  # siatka zajętości (BEV)
-│   ├── PerceptionMath.hpp   # geometria: głębia, X, TTC (header-only)
-│   └── Config.hpp           # Config + CameraParams (header-only)
+│   ├── YoloDetector.hpp       # detekcja YOLO + klasy COCO
+│   ├── KalmanFilter2D.hpp     # filtr Kalmana + TrackedObject
+│   ├── OccupancyGrid2D.hpp    # siatka zajętości (BEV)
+│   ├── PerceptionMath.hpp     # geometria: głębia, X, TTC (header-only)
+│   ├── DetectionPublisher.hpp # wysyłanie detekcji na gniazdo
+│   ├── FrameServer.hpp        # udostępnianie klatek (pamięć współdzielona)
+│   └── Config.hpp             # Config + CameraParams (header-only)
 ├── src/
-│   ├── main.cpp             # pętla główna: detekcja → tracking → render
+│   ├── main.cpp               # pętla główna: detekcja → tracking → render
 │   ├── YoloDetector.cpp
 │   ├── KalmanFilter2D.cpp
-│   └── OccupancyGrid2D.cpp
+│   ├── OccupancyGrid2D.cpp
+│   ├── DetectionPublisher.cpp
+│   └── FrameServer.cpp
+├── tests/
+│   └── test_perception_math.cpp  # geometria + Kalman (./run.sh test)
 ├── models/             # wagi ONNX — pobierane osobno
 ├── assets/             # obrazy testowe i wyniki
 └── classifiers/        # kaskady Haara
@@ -238,12 +244,15 @@ Uczciwa lista ograniczeń — to projekt badawczy, nie gotowy produkt.
   droga do powtarzalnych testów.
 - **Śledzenie metodą najbliższego sąsiada** — proste i szybkie, ale przy
   wielu podobnych obiektach blisko siebie potrafi zamienić ID.
+- **Klatki tylko dla procesów na tym samym urządzeniu** — pamięć współdzielona
+  nie przechodzi przez sieć. Odbiorca na innej maszynie musi wziąć obraz ze
+  strumienia WebRTC, nie stąd.
 
 ### Inżynieria
 
-- **Brak testów** — żadnych jednostkowych ani integracyjnych. Funkcje czysto
-  matematyczne (`calculateDepth`, `calculateX`, krok Kalmana) nadają się do
-  testów natychmiast, bo nie zależą od kamery.
+- **Testy pokrywają tylko matematykę** — `./run.sh test` sprawdza geometrię i
+  filtr Kalmana. Detekcja, tracking i pętla główna nie mają pokrycia, bo
+  wymagałyby nagrań referencyjnych.
 - **Brak CI** — nic nie weryfikuje, czy projekt kompiluje się na Linuksie.
 - **Tylko CPU** — ścieżka CUDA jest w kodzie, ale zakomentowana
   (`src/YoloDetector.cpp:36-37`).
@@ -320,19 +329,100 @@ Kilka rzeczy, które warto wiedzieć przy pisaniu odbiorcy:
 - **Pusta lista `objects` jest wysyłana normalnie** — to pozwala odróżnić
   „nic nie widać" od „producent przestał nadawać".
 
-### Uruchomienie całości
+---
+
+## Udostępnianie klatek (moduł jako źródło obrazu)
+
+Ten program jest **właścicielem kamery**. Inne procesy nie otwierają jej
+same — podłączają się tutaj i czytają gotowe klatki z pamięci współdzielonej.
+Dzięki temu urządzenie jest otwarte dokładnie raz, a odbiorcy dostają obraz,
+na którym detekcja już poszła.
+
+Publikowane są dwa strumienie:
+
+| Segment | Zawartość |
+| --- | --- |
+| `/talon.raw` | czysty obraz z kamery |
+| `/talon.annotated` | ten sam obraz z naniesionymi ramkami i etykietami |
+
+Odbiorca wybiera ten, który mu pasuje. Front rysujący własną nakładkę bierze
+`raw` (ma dane detekcji z gniazda); podgląd bez własnej logiki bierze
+`annotated`.
+
+### Jak to działa
+
+Bufor cykliczny na 4 klatki. Każdy slot ma licznik `sequence`: nieparzysty
+oznacza zapis w toku, parzysty — klatkę kompletną. Czytelnik zapamiętuje
+licznik, kopiuje piksele i sprawdza licznik ponownie; jeśli się zmienił,
+odrzuca kopię i próbuje jeszcze raz.
+
+Nic się nie blokuje. Producent nigdy nie czeka na odbiorcę, a wolny odbiorca
+gubi klatki zamiast spowalniać detekcję — dla podglądu na żywo to właściwy
+kompromis, bo nieaktualna klatka i tak jest bezwartościowa.
+
+Klatka 640x480 BGR to ~920 KB; przy 30 fps daje 27 MB/s. Przez gniazdo każdy
+bajt przeszedłby przez jądro dwa razy — tutaj odbiorca sięga wprost do tych
+samych stron pamięci. Cena: **oba procesy muszą działać na tym samym
+urządzeniu**.
+
+### Odbiór z Pythona
+
+Gotowy czytelnik jest w `apps/client/frame_shm.py`:
+
+```python
+from frame_shm import FrameReader
+
+with FrameReader("raw") as reader:      # albo "annotated"
+    frame = reader.read()
+    if frame is not None:
+        frame.image        # numpy BGR, (wysokość, szerokość, 3)
+        frame.frame_id     # rosnący numer klatki
+        frame.timestamp_ms # czas publikacji
+```
+
+`read()` zwraca `None`, gdy trafi na klatkę w trakcie zapisu — to normalne,
+wystarczy spróbować ponownie.
+
+### Odbiór z innego języka
+
+Układ pamięci opisuje `include/FrameServer.hpp`. Segment POSIX (`shm_open`)
+zaczyna się nagłówkiem `SegmentHeader`, po nim — wyrównane do strony — idą
+sloty, każdy z `SlotHeader` i surowymi pikselami BGR.
+
+Pole `layout_version` w nagłówku pozwala odbiorcy odmówić podłączenia, gdy
+układ się rozjedzie — lepiej to niż interpretowanie bajtów po swojemu.
+
+### Konfiguracja
+
+| Zmienna | Domyślnie | Znaczenie |
+| --- | --- | --- |
+| `TALON_SHARE_FRAMES` | `1` | `0` wyłącza udostępnianie klatek. |
+
+---
+
+## Uruchomienie całości
 
 ```bash
 cd apps/backend && go run ./cmd/server     # 1. relay
-./run.sh                                   # 2. detekcja (ten program)
-cd apps/client && uv run main.py           # 3. kamera + streaming
+./run.sh                                   # 2. percepcja (ten program)
+cd apps/client && uv run main.py           # 3. streaming
 cd apps/frontend && npm run dev            # 4. podgląd
 ```
 
-Uwaga: krok 2 i 3 domyślnie otwierają **tę samą kamerę**, a na większości
-systemów urządzenie da się otworzyć tylko raz. Do czasu rozwiązania tego
-(osobne kamery, `v4l2loopback`, albo przekazywanie klatek między procesami)
-uruchamiaj lokalnie tylko jeden z nich.
+Kolejność ma znaczenie: moduł percepcji tworzy segment pamięci, klient tylko
+się podłącza. Uruchomiony wcześniej klient nie znajdzie segmentu i przejdzie
+na własną kamerę (`video_source=auto`), co zablokuje kamerę modułowi.
+
+Klienta konfiguruje `apps/client/.env`:
+
+```
+VIDEO_SOURCE=perception    # auto | perception | local
+FRAME_STREAM=raw           # raw | annotated
+```
+
+`auto` (domyślne) próbuje modułu, a gdy go nie ma — otwiera własną kamerę.
+`perception` wymaga modułu i nie próbuje kamery, co jest bezpieczniejsze na
+dronie: cichy fallback maskowałby to, że percepcja nie działa.
 
 ---
 

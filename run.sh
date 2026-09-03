@@ -32,6 +32,7 @@ CMAKE_EXTRA_ARGS=""
 # Pusta wartosc = nie ustawiamy, program uzyje swojej domyslnej.
 DETECTION_SOCKET=""
 ONLY_CLASS=""
+SHARE_FRAMES=""
 DETECTION_SOCKET_SET=0
 
 CONFIG_FILE="$ROOT/config.env"
@@ -60,6 +61,7 @@ load_config() {
       MODEL)            MODEL="$val" ;;
       TALON_DETECTION_SOCKET) DETECTION_SOCKET="$val"; DETECTION_SOCKET_SET=1 ;;
       TALON_ONLY_CLASS)       ONLY_CLASS="$val" ;;
+      TALON_SHARE_FRAMES)     SHARE_FRAMES="$val" ;;
       MODELS_DIR)       MODELS_DIR_NAME="$val" ;;
       BUILD_TYPE)       BUILD_TYPE="$val" ;;
       CMAKE_EXTRA_ARGS) CMAKE_EXTRA_ARGS="$val" ;;
@@ -194,6 +196,7 @@ do_run() {
   local -a env_args=()
   [ "$DETECTION_SOCKET_SET" = 1 ] && env_args+=("TALON_DETECTION_SOCKET=$DETECTION_SOCKET")
   [ -n "$ONLY_CLASS" ] && env_args+=("TALON_ONLY_CLASS=$ONLY_CLASS")
+  [ -n "$SHARE_FRAMES" ] && env_args+=("TALON_SHARE_FRAMES=$SHARE_FRAMES")
 
   if [ ${#env_args[@]} -gt 0 ]; then
     ( cd "$models_dir" && env "${env_args[@]}" "$bin" )

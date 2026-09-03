@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <cmath>
 #include <ctime>
 #include <iostream>
@@ -23,6 +24,7 @@
 // Moduly projektu
 #include "Config.hpp"
 #include "DetectionPublisher.hpp"
+#include "FrameServer.hpp"
 #include "KalmanFilter2D.hpp"
 #include "OccupancyGrid2D.hpp"
 #include "PerceptionMath.hpp"
@@ -57,6 +59,27 @@ int main() {
   const char *class_env = std::getenv("TALON_ONLY_CLASS");
   const int only_class = class_env ? std::atoi(class_env) : 39;
 
+  // Udostepnianie klatek innym procesom przez pamiec wspoldzielona. Ten modul
+  // jest wlascicielem kamery — klient streamujacy nie otwiera jej sam, tylko
+  // czyta stad. TALON_SHARE_FRAMES=0 wylacza.
+  const char *share_env = std::getenv("TALON_SHARE_FRAMES");
+  const bool share_frames = !(share_env && std::string(share_env) == "0");
+
+  // Rozmiar rezerwujemy z gory, bo segment nie moze rosnac. Kamera moze zwrocic
+  // inna rozdzielczosc niz zadana, wiec bierzemy zapas.
+  const int shm_width = cfg.width;
+  const int shm_height = cfg.height;
+
+  std::unique_ptr<FrameServer> raw_frames;
+  std::unique_ptr<FrameServer> annotated_frames;
+  if (share_frames) {
+    raw_frames =
+        std::make_unique<FrameServer>("raw", shm_width, shm_height, 3);
+    annotated_frames =
+        std::make_unique<FrameServer>("annotated", shm_width, shm_height, 3);
+  }
+  uint64_t shared_frame_id = 0;
+
   // 1. GLOBALNY WEKTOR ŚLEDZONYCH OBIEKTÓW (Musi być POZA pętlą while!)
   std::vector<TrackedObject> tracked_objects;
   int next_unique_id = 1; // Licznik unikalnych ID (1, 2, 3...)
@@ -75,6 +98,14 @@ int main() {
     cap >> frame;
     if (frame.empty())
       continue;
+
+    ++shared_frame_id;
+
+    // Surowa klatka idzie do odbiorcow zanim cokolwiek na niej narysujemy —
+    // pozniej OpenCV modyfikuje `frame` w miejscu.
+    if (raw_frames) {
+      raw_frames->publish(frame, shared_frame_id);
+    }
 
     std::string current_info_to_log = "";
 
@@ -251,6 +282,12 @@ int main() {
     // "producent przestal nadawac".
     publisher.publish(message_objects, frame.cols, frame.rows, dt);
 
+    // Klatka z naniesionymi ramkami — dla odbiorcow, ktorzy chca gotowy
+    // podglad zamiast rysowac nakladke po swojemu.
+    if (annotated_frames) {
+      annotated_frames->publish(frame, shared_frame_id);
+    }
+
     // Wyświetlenie okien
     cv::Mat bevMat = grid.render();
     cv::imshow("Podglad Drona", frame);
@@ -274,6 +311,12 @@ int main() {
   if (publisher.isOpen()) {
     std::cout << "[detekcje] Wyslano " << publisher.framesSent()
               << " klatek, pominieto " << publisher.framesDropped() << "\n";
+  }
+  if (raw_frames && raw_frames->isOpen()) {
+    std::cout << "[klatki] Udostepniono " << raw_frames->framesPublished()
+              << " klatek surowych, " 
+              << (annotated_frames ? annotated_frames->framesPublished() : 0)
+              << " z ramkami\n";
   }
 
   return 0;
