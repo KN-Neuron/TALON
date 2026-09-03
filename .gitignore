@@ -119,6 +119,8 @@ env/
 
 # --- Edytory / IDE ----------------------------------------
 .vscode/
+# ...ale lista polecanych rozszerzen jest wspolna dla zespolu.
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -146,3 +148,20 @@ desktop.ini
 core
 core.*
 crash-*
+
+# --- Node / frontend --------------------------------------
+# (node_modules jest juz wyzej, w sekcji zaleznosci zewnetrznych)
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- Pliki projektowe edytorow ----------------------------
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

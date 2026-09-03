@@ -35,6 +35,19 @@
 
 ---
 
+---
+
+## Klonowanie
+
+Repozytorium trzyma zasoby `*.png` w Git LFS, wiec przed klonowaniem:
+
+```bash
+git lfs install
+git clone <repo-url>
+```
+
+Jesli sklonowales bez tego, dociagnij pliki: `git lfs pull`.
+
 ## Co to jest
 
 TALON to system **wykrywania przeszkód i szacowania odległości dla drona**,
@@ -207,8 +220,18 @@ TALON/
 │   └── test_perception_math.cpp  # geometria + Kalman (./run.sh test)
 ├── models/             # wagi ONNX — pobierane osobno
 ├── assets/             # obrazy testowe i wyniki
-└── classifiers/        # kaskady Haara
+├── classifiers/        # kaskady Haara
+├── docs/
+│   ├── detection-protocol.md  # format ramek z detekcjami
+│   └── consuming-streams.md   # jak napisać odbiorcę
+└── apps/               # streaming obrazu do przeglądarki
+    ├── backend/        # Go: relay WHIP/WHEP + rozgłaszanie detekcji
+    ├── client/         # Python: czyta klatki z modułu, publikuje przez WebRTC
+    └── frontend/       # React: podgląd z nakładką detekcji
 ```
+
+Moduł percepcji (korzeń repo) i `apps/` to dwie strony jednego potoku:
+pierwszy produkuje klatki i detekcje, drugi rozsyła je do przeglądarki.
 
 `PerceptionMath.hpp` i `Config.hpp` nie mają odpowiedników `.cpp` — zawierają
 wyłącznie funkcje `inline` i struktury danych, więc implementacja jest w
@@ -405,9 +428,14 @@ układ się rozjedzie — lepiej to niż interpretowanie bajtów po swojemu.
 ```bash
 cd apps/backend && go run ./cmd/server     # 1. relay
 ./run.sh                                   # 2. percepcja (ten program)
-cd apps/client && uv run main.py           # 3. streaming
-cd apps/frontend && npm run dev            # 4. podgląd
+cd apps/client && uv sync && uv run main.py  # 3. streaming
+cd apps/frontend && npm install && npm run dev  # 4. podgląd
 ```
+
+Otwórz adres wypisany przez Vite, wybierz kamerę, kliknij **Connect**.
+
+Każda część domyślnie celuje w `http://localhost:8080` — zmienia się to przez
+`BACKEND_ADDR` (backend), `BACKEND_URL` (klient) i `VITE_BACKEND_URL` (front).
 
 Kolejność ma znaczenie: moduł percepcji tworzy segment pamięci, klient tylko
 się podłącza. Uruchomiony wcześniej klient nie znajdzie segmentu i przejdzie
@@ -423,6 +451,21 @@ FRAME_STREAM=raw           # raw | annotated
 `auto` (domyślne) próbuje modułu, a gdy go nie ma — otwiera własną kamerę.
 `perception` wymaga modułu i nie próbuje kamery, co jest bezpieczniejsze na
 dronie: cichy fallback maskowałby to, że percepcja nie działa.
+
+### Bez modułu percepcji
+
+Sam potok streamingu da się testować bez C++, YOLO i kamery — atrapa producenta
+wysyła detekcje w tym samym formacie:
+
+```bash
+cd apps/client && uv run mock_perception.py
+```
+
+Klient weźmie wtedy obraz z własnej kamery (`VIDEO_SOURCE=local`), a ramki
+przyjdą z atrapy. `ENABLE_DETECTIONS=false` wyłącza detekcje całkiem.
+
+- Format detekcji: [docs/detection-protocol.md](docs/detection-protocol.md)
+- Pisanie odbiorcy: [docs/consuming-streams.md](docs/consuming-streams.md)
 
 ---
 
