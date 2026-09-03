@@ -86,7 +86,7 @@ func (relay *Relay) Publish(ctx context.Context, id stream.ID, offerSDP string) 
 
 	sessionID := stream.SessionID(uuid.NewString())
 	relay.hub.mu.Lock()
-	relay.hub.sessions[sessionID] = &sessionEntry{streamID: id, role: stream.RolePublisher, pc: pc}
+	relay.hub.sessions[sessionID] = &sessionEntry{streamID: id, role: stream.RolePublisher, pc: pc, stream: as}
 	relay.hub.mu.Unlock()
 
 	return stream.Session{ID: sessionID, StreamID: id, Role: stream.RolePublisher}, answer, nil
@@ -148,7 +148,7 @@ func (relay *Relay) Subscribe(ctx context.Context, id stream.ID, offerSDP string
 	as.mu.Unlock()
 
 	relay.hub.mu.Lock()
-	relay.hub.sessions[sessionID] = &sessionEntry{streamID: id, role: stream.RoleSubscriber, pc: pc}
+	relay.hub.sessions[sessionID] = &sessionEntry{streamID: id, role: stream.RoleSubscriber, pc: pc, stream: as}
 	relay.hub.mu.Unlock()
 
 	return stream.Session{ID: sessionID, StreamID: id, Role: stream.RoleSubscriber}, answer, nil
@@ -168,7 +168,8 @@ func (relay *Relay) Teardown(ctx context.Context, sessionID stream.SessionID) er
 
 	switch entry.role {
 	case stream.RolePublisher:
-		relay.hub.removeStream(entry.streamID)
+		// By instance: a reconnecting publisher may already hold this id.
+		relay.hub.removeStreamInstance(entry.streamID, entry.stream)
 	case stream.RoleSubscriber:
 		relay.hub.removeSubscriber(entry.streamID, sessionID)
 	}

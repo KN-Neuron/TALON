@@ -383,3 +383,52 @@ func TestTeardownUnknownSession(t *testing.T) {
 		t.Fatalf("Teardown error = %v, want %v", err, stream.ErrSessionNotFound)
 	}
 }
+
+// TestReconnectingPublisherKeepsStream covers the race that took the stream
+// down in practice: a publisher's ICE-closed event arrives after the same
+// publisher has reconnected under the same id. Removing by id alone tore down
+// the fresh stream, leaving the client connected to nothing.
+func TestReconnectingPublisherKeepsStream(t *testing.T) {
+	r := newTestRelay(t)
+	const id = stream.ID("reconnect")
+
+	// Publish, then grab the stream instance the first publisher created.
+	publishTestStream(t, r, id, false)
+
+	r.hub.mu.RLock()
+	firstStream := r.hub.streams[id]
+	r.hub.mu.RUnlock()
+	if firstStream == nil {
+		t.Fatal("first stream not registered")
+	}
+
+	// Simulate the reconnect: the old stream goes away and a new publisher
+	// registers a fresh instance under the same id.
+	r.hub.removeStreamInstance(id, firstStream)
+	publishTestStream(t, r, id, false)
+
+	r.hub.mu.RLock()
+	secondStream := r.hub.streams[id]
+	r.hub.mu.RUnlock()
+	if secondStream == nil {
+		t.Fatal("reconnected stream not registered")
+	}
+	if secondStream == firstStream {
+		t.Fatal("expected a new stream instance after reconnect")
+	}
+
+	// The old connection's ICE handler fires now, carrying the stale instance.
+	// It must not touch the stream the new publisher owns.
+	r.hub.removeStreamInstance(id, firstStream)
+
+	ids, err := r.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, listed := range ids {
+		if listed == id {
+			return // still there: correct
+		}
+	}
+	t.Fatal("stale ICE event removed the reconnected publisher's stream")
+}

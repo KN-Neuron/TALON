@@ -41,6 +41,10 @@ function StreamPageView({ id, raw }: { id?: string; raw: boolean }) {
     if (!id) return
 
     let cancelled = false
+    // Held locally as well as in the ref: under StrictMode (and on a fast
+    // stream switch) two effects overlap, and the ref only ever holds the
+    // newest session -- the older one would leak its connection.
+    let session: WhepSession | null = null
 
     WhepSession.connect(
       BACKEND_URL,
@@ -62,12 +66,13 @@ function StreamPageView({ id, raw }: { id?: string; raw: boolean }) {
       },
       { detections: !raw },
     )
-      .then((session) => {
+      .then((connected) => {
+        session = connected
         if (cancelled) {
-          session.close()
+          connected.close()
           return
         }
-        sessionRef.current = session
+        sessionRef.current = connected
       })
       .catch((err) => {
         if (cancelled) return
@@ -83,8 +88,11 @@ function StreamPageView({ id, raw }: { id?: string; raw: boolean }) {
 
     return () => {
       cancelled = true
-      sessionRef.current?.close()
-      sessionRef.current = null
+      // Close this effect's own session, not whatever the ref points at now.
+      session?.close()
+      if (sessionRef.current === session) {
+        sessionRef.current = null
+      }
     }
   }, [id, navigate, raw, handleDetections])
 

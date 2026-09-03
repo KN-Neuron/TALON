@@ -69,6 +69,9 @@ type sessionEntry struct {
 	streamID stream.ID
 	role     stream.Role
 	pc       *webrtc.PeerConnection
+	// The stream this session belongs to. Held so teardown removes the stream
+	// this publisher created, never a newer one that reused the same id.
+	stream *activeStream
 }
 
 type hub struct {
@@ -95,6 +98,33 @@ func (h *hub) removeStream(id stream.ID) {
 		return
 	}
 
+	closeStream(as)
+}
+
+// removeStreamInstance drops a stream only if the id still maps to this exact
+// instance.
+//
+// A publisher's ICE state change arrives asynchronously, so a disconnect can
+// land after the same publisher has already reconnected and registered a new
+// stream under the same id. Removing by id alone would tear down that fresh
+// stream; comparing the pointer keeps the late event from touching it.
+func (h *hub) removeStreamInstance(id stream.ID, instance *activeStream) {
+	h.mu.Lock()
+	current, exists := h.streams[id]
+	if exists && current == instance {
+		delete(h.streams, id)
+	} else {
+		exists = false
+	}
+	h.mu.Unlock()
+	if !exists {
+		return
+	}
+
+	closeStream(instance)
+}
+
+func closeStream(as *activeStream) {
 	as.mu.Lock()
 	pc := as.publisherPC
 	subscribers := as.subscribers

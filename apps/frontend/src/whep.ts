@@ -79,8 +79,17 @@ export class WhepSession {
         maxRetransmits: 0,
       })
 
-      channel.addEventListener('message', (event: MessageEvent<string>) => {
-        const frame = parseDetectionFrame(event.data)
+      // Payloads arrive as ArrayBuffer when the publisher sends bytes (the
+      // Python client does) and as a string when it sends text. Decode both:
+      // the wire format is UTF-8 JSON either way.
+      channel.binaryType = 'arraybuffer'
+      const decoder = new TextDecoder()
+
+      channel.addEventListener('message', (event: MessageEvent<string | ArrayBuffer>) => {
+        const text =
+          typeof event.data === 'string' ? event.data : decoder.decode(event.data)
+
+        const frame = parseDetectionFrame(text)
         // A single malformed frame must not break the stream.
         if (frame) handlers.onDetections?.(frame)
       })

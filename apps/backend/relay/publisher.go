@@ -39,7 +39,9 @@ func (relay *Relay) attachPublisherHandlers(pc *webrtc.PeerConnection, as *activ
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {
-			relay.hub.removeStream(as.id)
+			// By instance, not by id: this event can arrive after the same
+			// publisher has reconnected, and must not tear down the new stream.
+			relay.hub.removeStreamInstance(as.id, as)
 		}
 	})
 }
