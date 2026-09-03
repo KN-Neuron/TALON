@@ -233,7 +233,9 @@ Uczciwa lista ograniczeń — to projekt badawczy, nie gotowy produkt.
   rzeczywistej, zdefiniowanej tylko dla 4 klas COCO; reszta dostaje 0.30 m.
   Dla nietypowych obiektów pomiar będzie zauważalnie przesunięty.
 - **Brak trwałego logowania** — wyniki lecą na `stdout`, nic nie zapisuje się
-  do pliku ani CSV, więc nie ma jak analizować przebiegu po fakcie.
+  do pliku ani CSV, więc nie ma jak analizować przebiegu po fakcie. Ramki
+  wysyłane na gniazdo mają komplet danych, więc nagrywanie ich to najprostsza
+  droga do powtarzalnych testów.
 - **Śledzenie metodą najbliższego sąsiada** — proste i szybkie, ale przy
   wielu podobnych obiektach blisko siebie potrafi zamienić ID.
 
@@ -245,6 +247,92 @@ Uczciwa lista ograniczeń — to projekt badawczy, nie gotowy produkt.
 - **Brak CI** — nic nie weryfikuje, czy projekt kompiluje się na Linuksie.
 - **Tylko CPU** — ścieżka CUDA jest w kodzie, ale zakomentowana
   (`src/YoloDetector.cpp:36-37`).
+
+---
+
+## Nadawanie detekcji do podglądu na żywo
+
+Program wysyła każdą przetworzoną klatkę jako JSON na gniazdo uniksowe.
+Klient streamujący (`apps/client`) czyta te datagramy i przekazuje je kanałem
+danych WebRTC, a przeglądarka rysuje ramki na obrazie z kamery.
+
+Nadawanie jest **domyślnie włączone** i nie wymaga niczego dodatkowego —
+jeśli po drugiej stronie nikt nie słucha, datagramy po prostu przepadają, a
+detekcja działa dalej bez zmian.
+
+```bash
+./run.sh                    # nadaje na /tmp/talon-detections.sock
+```
+
+### Konfiguracja
+
+| Zmienna | Domyślnie | Znaczenie |
+| --- | --- | --- |
+| `TALON_DETECTION_SOCKET` | `/tmp/talon-detections.sock` | Ścieżka gniazda. Pusta wartość wyłącza nadawanie. |
+| `TALON_ONLY_CLASS` | `39` (butelka) | Klasa COCO do pokazania. `-1` = wszystkie. |
+
+```bash
+TALON_ONLY_CLASS=-1 ./run.sh              # wszystkie klasy
+TALON_DETECTION_SOCKET= ./run.sh          # bez nadawania, sam podgląd lokalny
+```
+
+### Format
+
+Jedna klatka to jeden datagram JSON:
+
+```json
+{
+  "version": 1,
+  "frame_id": 4821,
+  "timestamp_ms": 1732104000123,
+  "frame_interval_s": 0.033,
+  "image_width": 640,
+  "image_height": 480,
+  "objects": [
+    {
+      "track_id": 3,
+      "class_id": 39,
+      "class_name": "bottle",
+      "confidence": 0.88,
+      "box": { "left": 100, "top": 120, "width": 40, "height": 110 },
+      "position": { "lateral_m": -0.45, "forward_m": 2.34 },
+      "closing_speed_mps": -0.8,
+      "time_to_collision_s": 2.9,
+      "frames_since_seen": 0
+    }
+  ]
+}
+```
+
+Pełny opis pól: `docs/detection-protocol.md`.
+
+Kilka rzeczy, które warto wiedzieć przy pisaniu odbiorcy:
+
+- **`SOCK_DGRAM`**, więc jedno `sendto` to jedna kompletna wiadomość — nie
+  trzeba doklejać długości ani sklejać fragmentów.
+- **Nadawanie nie blokuje** (`MSG_DONTWAIT`). Gdy odbiorca nie nadąża, jądro
+  gubi datagramy zamiast wstrzymywać pętlę detekcji.
+- **`position` i `time_to_collision_s` bywają pominięte** — TTC nie ma sensu
+  dla obiektu, który się nie zbliża, więc pole wtedy nie występuje. Odbiorca
+  musi to obsłużyć.
+- **Ślady na przewidywaniu też są wysyłane**, z rosnącym `frames_since_seen`.
+  Obiekt chwilowo zgubiony przez YOLO nie znika natychmiast z podglądu.
+- **Pusta lista `objects` jest wysyłana normalnie** — to pozwala odróżnić
+  „nic nie widać" od „producent przestał nadawać".
+
+### Uruchomienie całości
+
+```bash
+cd apps/backend && go run ./cmd/server     # 1. relay
+./run.sh                                   # 2. detekcja (ten program)
+cd apps/client && uv run main.py           # 3. kamera + streaming
+cd apps/frontend && npm run dev            # 4. podgląd
+```
+
+Uwaga: krok 2 i 3 domyślnie otwierają **tę samą kamerę**, a na większości
+systemów urządzenie da się otworzyć tylko raz. Do czasu rozwiązania tego
+(osobne kamery, `v4l2loopback`, albo przekazywanie klatek między procesami)
+uruchamiaj lokalnie tylko jeden z nich.
 
 ---
 

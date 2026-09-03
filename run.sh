@@ -4,6 +4,7 @@
 #
 #   ./run.sh          buduje (jesli trzeba) i uruchamia
 #   ./run.sh build    tylko buduje
+#   ./run.sh test     buduje i uruchamia testy jednostkowe
 #   ./run.sh clean    czysci katalog build/
 #   ./run.sh rebuild  czysci i buduje od zera
 #
@@ -27,6 +28,12 @@ MODELS_DIR_NAME="models"
 BUILD_TYPE="Release"
 CMAKE_EXTRA_ARGS=""
 
+# Przekazywane programowi przez srodowisko (main.cpp czyta je getenv()).
+# Pusta wartosc = nie ustawiamy, program uzyje swojej domyslnej.
+DETECTION_SOCKET=""
+ONLY_CLASS=""
+DETECTION_SOCKET_SET=0
+
 CONFIG_FILE="$ROOT/config.env"
 
 load_config() {
@@ -42,10 +49,17 @@ load_config() {
     key="${line%%=*}"; val="${line#*=}"
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
     val="$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/')"
+    # TALON_DETECTION_SOCKET= (pusta wartosc) swiadomie wylacza nadawanie,
+    # wiec dla tego klucza pusta wartosc jest poprawna.
+    if [ "$key" = "TALON_DETECTION_SOCKET" ] && [ -z "$val" ]; then
+      DETECTION_SOCKET=""; DETECTION_SOCKET_SET=1; continue
+    fi
     [ -n "$key" ] && [ -n "$val" ] || continue
 
     case "$key" in
       MODEL)            MODEL="$val" ;;
+      TALON_DETECTION_SOCKET) DETECTION_SOCKET="$val"; DETECTION_SOCKET_SET=1 ;;
+      TALON_ONLY_CLASS)       ONLY_CLASS="$val" ;;
       MODELS_DIR)       MODELS_DIR_NAME="$val" ;;
       BUILD_TYPE)       BUILD_TYPE="$val" ;;
       CMAKE_EXTRA_ARGS) CMAKE_EXTRA_ARGS="$val" ;;
@@ -174,13 +188,36 @@ do_run() {
 
   # Program laduje model sciezka wzgledna, wiec CWD musi byc katalogiem modeli.
   info "Start (CWD=$MODELS_DIR_NAME/, ESC konczy program)..."
-  ( cd "$models_dir" && "$bin" )
+
+  # Zmienne dla nadawania detekcji ustawiamy tylko wtedy, gdy uzytkownik je
+  # podal — inaczej program bierze swoje wartosci domyslne.
+  local -a env_args=()
+  [ "$DETECTION_SOCKET_SET" = 1 ] && env_args+=("TALON_DETECTION_SOCKET=$DETECTION_SOCKET")
+  [ -n "$ONLY_CLASS" ] && env_args+=("TALON_ONLY_CLASS=$ONLY_CLASS")
+
+  if [ ${#env_args[@]} -gt 0 ]; then
+    ( cd "$models_dir" && env "${env_args[@]}" "$bin" )
+  else
+    ( cd "$models_dir" && "$bin" )
+  fi
 }
 
 load_config
 
+do_test() {
+  local bin
+  for c in "$BUILD_DIR/tests" "$BUILD_DIR/Release/tests" "$BUILD_DIR/Debug/tests"; do
+    [ -x "$c" ] && { bin="$c"; break; }
+  done
+  [ -n "${bin:-}" ] || die "Nie znaleziono binarki testow. Uruchom: ./run.sh build"
+
+  info "Testy jednostkowe..."
+  "$bin"
+}
+
 case "${1:-run}" in
   build)   do_build ;;
+  test)    do_build; do_test ;;
   clean)   info "Czyszczenie build/..."
            rm -rf "$BUILD_DIR"
            # usun wiszacy symlink do nieistniejacej juz bazy kompilacji
@@ -190,5 +227,5 @@ case "${1:-run}" in
   run|"")  find_binary >/dev/null 2>&1 || do_build; do_run ;;
   -h|--help|help)
     sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-  *) die "Nieznana komenda: $1 (uzyj: build | run | clean | rebuild)" ;;
+  *) die "Nieznana komenda: $1 (uzyj: build | run | test | clean | rebuild)" ;;
 esac

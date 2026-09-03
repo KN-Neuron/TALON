@@ -15,10 +15,25 @@ add_executable(testcv
   src/YoloDetector.cpp
   src/KalmanFilter2D.cpp
   src/OccupancyGrid2D.cpp
+  src/DetectionPublisher.cpp
 )
 
 target_link_libraries(testcv PRIVATE ${OpenCV_LIBS})
 target_include_directories(testcv PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# --- Testy ------------------------------------------------------------------
+# Obejmuja czysta matematyke (geometria, Kalman) — nie wymagaja kamery ani
+# modelu, wiec chodza wszedzie. Uruchomienie: ./run.sh test
+add_executable(tests
+  tests/test_perception_math.cpp
+  src/KalmanFilter2D.cpp
+)
+
+target_link_libraries(tests PRIVATE ${OpenCV_LIBS})
+target_include_directories(tests PRIVATE
   ${OpenCV_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )

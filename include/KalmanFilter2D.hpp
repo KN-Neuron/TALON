@@ -109,4 +109,11 @@ struct TrackedObject {
   int class_id;
   KalmanFilter2D kalman;
   int time_since_update;
+
+  // Ostatnia detekcja przypisana do tego sladu. Trzymamy ja przy obiekcie,
+  // zeby renderowanie i nadawanie nie musialy ponownie parowac sladow z
+  // detekcjami — parowanie odbywa sie raz, w fazie asocjacji.
+  cv::Rect last_box;
+  float last_confidence = 0.0f;
+  double last_lateral_m = 0.0;
 };
