@@ -63,4 +63,4 @@ class BCI:
 
     def channels(self, now=None):
         ch, expiry = self._active
-        return ch if (now or time.monotonic()) < expiry else ZERO
+        return ch if (time.monotonic() if now is None else now) < expiry else ZERO

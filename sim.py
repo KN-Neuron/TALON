@@ -199,7 +199,7 @@ def rotors(sim):
     return out
 
 
-def draw(surf, sim, fonts, cam, cam_yaw, fpv=False):
+def draw(surf, sim, fonts, cam, cam_yaw, fpv=False, hud=True):
     big, small = fonts
     w, h = surf.get_size()
     surf.fill(BG)
@@ -249,6 +249,9 @@ def draw(surf, sim, fonts, cam, cam_yaw, fpv=False):
             pygame.draw.circle(surf, ACCENT if i < 2 else (200, 120, 90),
                                (int(sx), int(sy)), max(2, int(FOV * 0.22 / z)), 2)
 
+    if not hud:
+        return
+
     state = ("BUMP" if sim.touching else "FLYING") if sim.flying else sim.note.upper()
     color = (WARN if sim.touching else ACCENT) if sim.flying else \
         (WARN if sim.note == "EMERGENCY" else DIM)
@@ -280,16 +283,28 @@ def main():
     cam_yaw = math.radians(sim.yaw)
     fpv = False
     running = True
+    remote_at = -999.0
+    remote_rc = (0, 0, 0, 0)
     while running:
         while True:  # drain the socket, else we fly on stale sticks
             try:
                 data, peer = sock.recvfrom(512)
             except (BlockingIOError, OSError):
                 break
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except (ValueError, UnicodeError):
+                continue
+            if not isinstance(msg, dict):
+                continue
             cmd = msg.get("c")
             if cmd == "rc":
-                sim.rc = tuple(msg["v"])
+                values = msg.get("v")
+                if (isinstance(values, list) and len(values) == 4
+                        and all(type(v) in (int, float) and math.isfinite(v)
+                                and -100 <= v <= 100 for v in values)):
+                    remote_rc = tuple(values)
+                    remote_at = time.monotonic()
             elif cmd in ("takeoff", "land", "emergency"):
                 getattr(sim, cmd)()
             elif cmd == "state":  # main.py asks: T/L here must not desync it
@@ -324,8 +339,8 @@ def main():
                   100 * (k[pygame.K_UP] - k[pygame.K_DOWN]),
                   100 * (k[pygame.K_w] - k[pygame.K_s]),
                   100 * (k[pygame.K_d] - k[pygame.K_a]))
-        if any(manual):
-            sim.rc = manual
+        sim.rc = manual if any(manual) else (
+            remote_rc if time.monotonic() - remote_at < 0.3 else (0, 0, 0, 0))
 
         dt = clock.tick(60) / 1000.0
         sim.step(min(dt, 0.1))  # a dragged window must not teleport the drone

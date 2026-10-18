@@ -1,3 +1,8 @@
+# Unity version: start here
+
+See **[RUN_UNITY.md](RUN_UNITY.md)** for installation, build and run steps,
+including keyboard-only use, optional BrainAccess EEG and WSL configuration.
+
                     ___                                 ___
                    /   \                               /   \
               ____|  o  |_____________________________|  o  |____
@@ -31,13 +36,19 @@
 
                     ▶ UNIT-07 ▪ AUTONOMOUS ▪ ARMED ◀
 
+# TALON · KN Interface
+
+The native **Unity URP** version is in [`unity/`](unity/README.md). It renders
+directly on the Windows GPU and retains Python-compatible BCI commands. See its
+README for the Windows working copy, builds, controls and WSL integration.
+
 # drone control
 
 PS4 pad + BCI -> drone. The pad always wins.
 
     pip install -r requirements.txt
     python main.py --mock                          # UI only, no drone
-    python main.py --sim                           # 3D sim + SSVEP windows
+    python main.py --sim                           # textured Panda3D park + clickable controls
     python main.py                                 # DJI Tello
     python main.py --connect COM3                  # ArduPilot over USB serial
     python main.py --connect udpin:0.0.0.0:14550   # ArduPilot over SITL/wifi bridge
@@ -62,8 +73,49 @@ every press, so correct the `BTN_*` constants in `main.py` once.
 
 ## Simulator
 
-`--sim` opens two more windows next to the control UI and flies those instead
-of a drone:
+The default `python main.py --sim` renders a textured campus park with Panda3D:
+foliage, buildings, benches, path lighting, directional sunlight and shadows,
+plus a quadcopter with animated propellers. Edge-aware FXAA postprocessing
+smooths silhouettes even on drivers without MSAA support. The park includes
+grass blades, flowerbeds, bike racks, bins, drains and signs; wood, glass and
+metal have separate materials. Small vegetation uses simpler meshes to limit
+geometry cost. `V` switches chase/FPV cameras.
+Building walls and tree trunks participate in the existing collision model.
+This is a visual training environment, not an aerodynamic simulator.
+
+All scenery meshes and textures are generated locally in `scenery.py`; the
+layout and environmental collision boxes live in `world.py`. Small decorative
+props live in `details.py`; the smoothing pass is in `shaders/`. Decorative
+props do not add collision boxes. No external art
+assets or runtime downloads are required. An OpenGL-capable graphics driver
+is required. The viewport renders at a fixed internal resolution then scales
+to the panel; this limits GPU readback cost when resizing the desktop window.
+The default `balanced` profile uses 1024x640 and 2048px shadows. Higher quality
+increases GPU work; use `low` or disable shadows when frame rate drops.
+
+```bash
+python main.py --sim                  # full 3D park
+python main.py --sim --quality high   # 1440x900, 4096px shadows
+python main.py --sim --quality low    # 800x500, 1024px shadows, fewer grass blades
+python main.py --sim --no-shadows     # lower rendering cost
+python main.py --sim --wireframe      # original lightweight line renderer
+python test_scenery.py                # requires a working OpenGL backend
+TALON_TEST_3D=1 python test_ui.py      # full panel + 3D integration test
+```
+
+
+`--sim` embeds the 3D view and controls in one resizable window. Click **Start**
+or press `T`, then fly with arrows (movement), `W`/`S` (height), and `A`/`D`
+(rotation). `L` lands, `SPACE` cuts motors, `V` changes the camera.
+
+The panel has clickable flight and BCI controls. **F1** shows diagnostics and
+keyboard help. SSVEP opens only when **Otwórz bodźce SSVEP** is clicked; enable
+BCI with **B** before sending commands. Closing the panel closes SSVEP too.
+Real-device connection failures are shown explicitly; choose `--mock` to use
+the demonstration backend. Real-device flight status describes requested flight,
+not telemetry-confirmed flight.
+
+The following tools can also run independently:
 
 - **`sim.py`** — a 3D chase-cam quadcopter on a ground grid. It is a normal
   drone backend (`SimDrone`), so takeoff, land, emergency, RC and even photo

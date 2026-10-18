@@ -1,0 +1,15 @@
+# Local Python runtime
+__pycache__/
+*.py[cod]
+.venv/
+
+# TALON Unity: keep source assets and .meta files, omit generated state.
+unity/TalonURP/[Ll]ibrary/
+unity/TalonURP/[Tt]emp/
+unity/TalonURP/[Oo]bj/
+unity/TalonURP/[Ll]ogs/
+unity/TalonURP/[Uu]serSettings/
+unity/TalonURP/[Bb]uilds/
+unity/TalonURP/.vs/
+unity/TalonURP/*.csproj
+unity/TalonURP/*.sln*

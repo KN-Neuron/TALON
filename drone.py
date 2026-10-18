@@ -254,8 +254,4 @@ def make_drone(mock=False, connect=None, sim=False):
         return MockDrone()
     if sim:
         return SimDrone()
-    try:
-        return MavDrone(connect) if connect else TelloDrone()
-    except Exception as e:
-        print(f"[drone] no drone ({e}) -> falling back to mock")
-        return MockDrone()
+    return MavDrone(connect) if connect else TelloDrone()

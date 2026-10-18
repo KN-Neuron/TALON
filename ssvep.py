@@ -64,7 +64,7 @@ def layout(w, h):
     return boxes, fonts
 
 
-def main():
+def main(host="127.0.0.1", port=BCI_PORT):
     pygame.init()
     flags = pygame.RESIZABLE
     try:
@@ -105,7 +105,7 @@ def main():
                 continue
             selected_at = time.monotonic()
             sock.sendto(json.dumps({"cmd": STIMULI[selected][1]}).encode(),
-                        ("127.0.0.1", BCI_PORT))
+                        (host, port))
 
         # one clock read for the whole frame, so all four share a phase origin
         now = time.monotonic()
@@ -170,5 +170,11 @@ def demo():
 
 
 if __name__ == "__main__":
-    import sys
-    demo() if "--test" in sys.argv else main()
+    import argparse
+    from unity_bci import resolve_host
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test', action='store_true')
+    parser.add_argument('--host', default='127.0.0.1', help='Unity host, or windows for the WSL gateway')
+    parser.add_argument('--port', type=int, default=BCI_PORT)
+    args = parser.parse_args()
+    demo() if args.test else main(resolve_host(args.host), args.port)

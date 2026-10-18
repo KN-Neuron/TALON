@@ -34,22 +34,22 @@ def bci_inbox(port=BCI_PORT):
 def drain_bci(sock, bci):
     """Apply every command waiting on the socket. Returns the last one applied."""
     last = ""
-    while True:
+    for _ in range(128):
         try:
             data, _ = sock.recvfrom(256)
         except (BlockingIOError, OSError):
             return last
         try:
-            cmd = json.loads(data).get("cmd")
-        except ValueError:
+            message = json.loads(data)
+            if not isinstance(message, dict):
+                continue
+            cmd = message.get("cmd")
+        except (ValueError, UnicodeError):
             continue
         if cmd in BCI_PULSES:  # whitelist: this socket is reachable, not trusted
             getattr(bci, cmd)()
             last = cmd
-
-BG, FG, DIM = (18, 18, 22), (235, 235, 240), (110, 110, 125)
-SRC_COLOR = {"PS4": (80, 220, 120), "BCI": (90, 160, 255), "IDLE": (110, 110, 125)}
-
+    return last
 
 def read_pad(js):
     if js is None:
@@ -64,143 +64,205 @@ def snap(drone):
     return drone.photo(path) or "no camera"
 
 
-def draw(screen, fonts, drone, bci, ch, source, js, battery, note):
-    big, mid, small = fonts
-    screen.fill(BG)
-
-    def text(s, font, x, y, color=FG):
-        screen.blit(font.render(s, True, color), (x, y))
-
-    text("DRONE CONTROL", mid, 20, 16)
-    text(f"{drone.name}   bat {battery}%   {'FLYING' if drone.flying else 'grounded'}",
-         small, 20, 48, DIM)
-
-    pad_state = "PS4 connected" if js else "PS4 DISCONNECTED"
-    text(pad_state, small, 20, 70, FG if js else (255, 90, 90))
-
-    text(source, big, 20, 100, SRC_COLOR[source])
-    text("BCI ARMED" if bci.armed else "BCI disarmed", small, 200, 106,
-         SRC_COLOR["BCI"] if bci.armed else DIM)
-    text(f"last: {bci.last or '-'}", small, 200, 126, DIM)
-    text(note, small, 330, 70, DIM)
-
-    for i, (label, val) in enumerate(zip(("roll", "pitch", "throttle", "yaw"), ch)):
-        y = 175 + i * 46
-        text(label, small, 20, y + 6, DIM)
-        x0, w = 110, 380
-        pygame.draw.rect(screen, (40, 40, 50), (x0, y, w, 22), border_radius=4)
-        pygame.draw.line(screen, DIM, (x0 + w // 2, y), (x0 + w // 2, y + 22))
-        px = int(val / 100 * (w // 2))
-        if px:
-            pygame.draw.rect(screen, SRC_COLOR[source],
-                             (x0 + w // 2 + min(px, 0), y + 3, abs(px), 16), border_radius=3)
-        text(f"{val:+4d}", small, x0 + w + 12, y + 6)
-
-    text("triangle/T takeoff   cross/L land   circle/SPACE EMERGENCY", small, 20, 356, DIM)
-    text("square/P photo   L1/B arm BCI   1-4 fake BCI commands", small, 20, 374, DIM)
-    pygame.display.flip()
-
-
 def main():
+    from pathlib import Path
+    from ui import Dashboard, buttons
+    from transport import Transport
+
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mock", action="store_true", help="no drone, just the UI")
-    ap.add_argument("--sim", action="store_true",
-                    help="fly sim.py and open the SSVEP stimulus window")
-    ap.add_argument("--connect", help="MAVLink target, e.g. COM3 or udpin:0.0.0.0:14550")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument('--mock', action='store_true', help='panel demonstracyjny')
+    mode.add_argument('--sim', action='store_true', help='symulator w panelu')
+    mode.add_argument('--connect', help='adres MAVLink')
+    ap.add_argument('--wireframe', action='store_true', help='lekki widok liniowy zamiast grafiki 3D')
+    ap.add_argument('--no-shadows', action='store_true', help='wyłącz cienie w trybie 3D')
+    ap.add_argument('--quality', choices=('low', 'balanced', 'high'), default='balanced', help='jakość obrazu 3D')
     args = ap.parse_args()
-
-    kids = [subprocess.Popen([sys.executable, f]) for f in ("sim.py", "ssvep.py")] \
-        if args.sim else []
-    if kids:
-        time.sleep(1.0)  # let sim.py bind 9000 before we start shouting at it
-
     pygame.init()
-    # SCALED|RESIZABLE: the HUD has fixed pixel coordinates, so let SDL
-    # stretch it to whatever size the window is dragged to.
-    screen = pygame.display.set_mode((640, 400), pygame.SCALED | pygame.RESIZABLE)
-    pygame.display.set_caption("drone control")
-    fonts = (pygame.font.SysFont(None, 56),
-             pygame.font.SysFont(None, 30),
-             pygame.font.SysFont(None, 22))
-    clock = pygame.time.Clock()
-
-    drone = make_drone(args.mock, args.connect, args.sim)
+    screen = pygame.display.set_mode((1180, 760), pygame.RESIZABLE)
+    pygame.display.set_caption('TALON · Sterowanie')
+    ui, clock = Dashboard(), pygame.time.Clock()
+    sim = None
+    if args.sim:
+        from sim import Sim
+        sim = Sim()
+    transport = None if sim else Transport(lambda: make_drone(args.mock, args.connect))
+    inbox, stimuli = None, None
     bci = BCI()
-    inbox = bci_inbox()
     js = pygame.joystick.Joystick(0) if pygame.joystick.get_count() else None
+    diagnostics, fpv, running = False, False, True
+    pad_active_at, manual_until = -999.0, -999.0
+    channels, source, note = ZERO, 'Oczekiwanie', 'Strzałki: ruch · W/S: wysokość · A/D: obrót · F1: pomoc'
+    controls = []
 
-    def toggle_bci():
-        bci.armed = not bci.armed
-        if not bci.armed:
+    def flight_status():
+        if sim:
+            if sim.note == 'EMERGENCY':
+                return 'Silniki wyłączone'
+            if not sim.flying:
+                return 'Lądowanie' if sim.pos[2] > 0.05 else 'Na ziemi'
+            return 'Startowanie' if sim.note == 'takeoff' else ('Kontakt z bramką' if sim.touching else 'W locie')
+        if not transport.connected:
+            return 'Błąd połączenia' if transport.error else 'Łączenie…'
+        if transport.busy and transport.action in ('takeoff', 'land', 'emergency'):
+            return {'takeoff': 'Startowanie…', 'land': 'Lądowanie…', 'emergency': 'Wyłączanie silników…'}[transport.action]
+        return 'Lot zadany' if transport.flying else 'Lot niezadany'
+
+    def action(name):
+        nonlocal diagnostics, fpv, stimuli, note, channels, manual_until
+        if name == 'bci':
+            bci.armed = not bci.armed
             bci.stop()
+            note = 'BCI gotowe' if bci.armed else 'BCI wyłączone'
+        elif name == 'diagnostics':
+            diagnostics = not diagnostics
+        elif name == 'camera':
+            fpv = not fpv
+        elif name == 'stimuli':
+            if stimuli is None or stimuli.poll() is not None:
+                stimuli = subprocess.Popen([sys.executable, str(Path(__file__).with_name('ssvep.py'))])
+            note = 'Bodźce SSVEP otwarte. Włącz BCI, aby przyjmować polecenia.'
+        elif name in ('takeoff', 'land', 'emergency'):
+            if name == 'takeoff' and ((sim and (sim.flying or sim.pos[2] > 0.05)) or
+                    (transport and (transport.flying or (transport.busy and transport.action not in ('battery', 'send_rc'))))):
+                return
+            bci.stop()
+            channels = ZERO
+            if name != 'takeoff':
+                manual_until = time.monotonic() + 0.3
+            if sim:
+                if name != 'takeoff' or (not sim.flying and sim.pos[2] <= 0.05):
+                    sim.rc = ZERO
+                    getattr(sim, name)()
+            elif transport.command(name):
+                note = 'Wysłano polecenie: ' + name
+            else:
+                note = 'Polecenie niedostępne — sprawdź połączenie.'
+        elif name == 'photo':
+            os.makedirs('photos', exist_ok=True)
+            path = os.path.join('photos', time.strftime('%Y%m%d-%H%M%S.jpg'))
+            if sim:
+                pygame.image.save(ui.view or screen, path)
+                note = 'Zapisano: ' + path
+            elif transport.command('photo', path):
+                note = 'Zlecono zdjęcie: ' + path
 
-    pad_active_at = -999.0
-    battery, next_battery = 0, 0.0
-    note = ""
-    running = True
-    while running:
-        now = time.monotonic()
-        for e in pygame.event.get():
-            if e.type == pygame.QUIT:
-                running = False
-            elif e.type == pygame.JOYDEVICEADDED:
-                js = pygame.joystick.Joystick(e.device_index)
-            elif e.type == pygame.JOYDEVICEREMOVED:
-                js = None
-                # the pad IS the emergency stop: without it, get on the ground
-                bci.armed = False
-                bci.stop()
-                if drone.flying:
-                    drone.land()
-                note = "pad lost -> landed"
-            elif e.type == pygame.JOYBUTTONDOWN:
-                print(f"[pad] button {e.button}")
-                if e.button == BTN_TAKEOFF: drone.takeoff()
-                elif e.button == BTN_LAND: drone.land()
-                elif e.button == BTN_EMERGENCY: drone.emergency()
-                elif e.button == BTN_PHOTO: note = snap(drone)
-                elif e.button == BTN_BCI: toggle_bci()
-                pad_active_at = now
-            elif e.type == pygame.KEYDOWN:
-                # keyboard stands in for hardware while you develop
-                {pygame.K_t: drone.takeoff, pygame.K_l: drone.land,
-                 pygame.K_SPACE: drone.emergency, pygame.K_b: toggle_bci,
-                 pygame.K_1: bci.up, pygame.K_2: bci.down,
-                 pygame.K_3: bci.forward, pygame.K_4: bci.rotate_right,
-                 }.get(e.key, lambda: None)()
-                if e.key == pygame.K_p:
-                    note = snap(drone)
-                if e.key == pygame.K_ESCAPE:
+    try:
+        if sim and not args.wireframe:
+            from scenery import ParkRenderer
+            from world import obstacles
+            ui.renderer = ParkRenderer(shadows=not args.no_shadows, quality=args.quality)
+            sim.boxes.extend(obstacles())
+        inbox = bci_inbox()
+        while running:
+            dt = min(clock.tick(60) / 1000, 0.1)
+            ui.render_dt = dt
+            now = time.monotonic()
+            if transport:
+                transport.poll()
+            flying = sim.flying if sim else transport.flying
+            busy = bool(transport and transport.busy and transport.action in ('connect', 'takeoff', 'land', 'emergency'))
+            controls = buttons(screen.get_size(), flying, bci.armed, diagnostics, fpv, busy)
+            if sim and sim.pos[2] > 0.05 and not sim.flying:
+                controls = [(key, label, rect, enabled and key != 'takeoff') for key, label, rect, enabled in controls]
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
                     running = False
+                elif e.type == pygame.VIDEORESIZE:
+                    screen = pygame.display.set_mode((max(1000, e.w), max(680, e.h)), pygame.RESIZABLE)
+                elif e.type == pygame.JOYDEVICEADDED:
+                    if js is None:
+                        js = pygame.joystick.Joystick(e.device_index)
+                elif e.type == pygame.JOYDEVICEREMOVED and js and e.instance_id == js.get_instance_id():
+                    js = None
+                    bci.armed = False
+                    bci.stop()
+                    if flying:
+                        action('land')
+                    note = 'Pad odłączony — BCI wyłączone, zlecono lądowanie.'
+                elif e.type == pygame.WINDOWFOCUSLOST:
+                    bci.stop()
+                    channels = ZERO
+                elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                    for key, _, rect, enabled in controls:
+                        if enabled and pygame.Rect(rect).collidepoint(e.pos):
+                            action(key)
+                            break
+                elif e.type == pygame.JOYBUTTONDOWN:
+                    name = {BTN_TAKEOFF: 'takeoff', BTN_LAND: 'land', BTN_EMERGENCY: 'emergency', BTN_PHOTO: 'photo', BTN_BCI: 'bci'}.get(e.button)
+                    if name:
+                        action(name)
+                elif e.type == pygame.KEYDOWN:
+                    if e.key == pygame.K_ESCAPE:
+                        running = False
+                    name = {pygame.K_t: 'takeoff', pygame.K_l: 'land', pygame.K_SPACE: 'emergency', pygame.K_b: 'bci', pygame.K_p: 'photo', pygame.K_v: 'camera', pygame.K_F1: 'diagnostics'}.get(e.key)
+                    if name:
+                        action(name)
+                    elif pygame.K_1 <= e.key <= pygame.K_4:
+                        (bci.up, bci.down, bci.forward, bci.rotate_right)[e.key - pygame.K_1]()
+            if not running:
+                break
+            received = drain_bci(inbox, bci)
+            if received:
+                note = ('BCI: ' + received) if bci.armed else 'Polecenie pominięte — BCI wyłączone'
+            pad = read_pad(js)
+            keys = pygame.key.get_pressed()
+            keyboard = ZERO
+            if pygame.key.get_focused():
+                keyboard = Channels(60 * (keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]),
+                                    60 * (keys[pygame.K_UP] - keys[pygame.K_DOWN]),
+                                    60 * (keys[pygame.K_w] - keys[pygame.K_s]),
+                                    60 * (keys[pygame.K_d] - keys[pygame.K_a]))
+            manual = pad if pad != ZERO else keyboard
+            if manual != ZERO:
+                pad_active_at = now
+                source = 'Pad' if pad != ZERO else 'Klawiatura'
+                bci.stop()
+            channels, mixed = mix(manual, bci.channels(now), pad_active_at, now)
+            if mixed == 'PS4' and manual == ZERO:
+                bci.stop()
+                source = 'Przerwa po sterowaniu'
+            elif mixed != 'PS4':
+                source = 'BCI' if mixed == 'BCI' else 'Oczekiwanie'
+            if now < manual_until:
+                channels = ZERO
+            if sim:
+                sim.rc = channels if sim.flying else ZERO
+                sim.step(dt)
+            else:
+                transport.tick(channels, now)
+            state = dict(name='Symulator' if sim else transport.name,
+                         battery=sim.battery() if sim else transport.battery,
+                         connection='Połączono' if sim or transport.connected else 'Brak połączenia',
+                         flight=flight_status(), source=source, armed=bci.armed,
+                         pad=js.get_name() if js else 'Brak · dostępna klawiatura',
+                         channels=channels, last=bci.last,
+                         note=('Błąd: ' + transport.error) if transport and transport.error else note)
+            busy = bool(transport and (not transport.connected or (transport.busy and transport.action in ('takeoff', 'land', 'emergency'))))
+            controls = buttons(screen.get_size(), sim.flying if sim else transport.flying, bci.armed, diagnostics, fpv, busy)
+            controls = [(key, label, rect, enabled and not (
+                (key == 'camera' and sim is None) or
+                (key == 'takeoff' and sim and sim.pos[2] > 0.05 and not sim.flying)))
+                for key, label, rect, enabled in controls]
+            ui.draw(screen, state, sim, diagnostics, fpv, controls)
+    finally:
+        try:
+            if transport:
+                transport.close()
+        finally:
+            if inbox:
+                inbox.close()
+            if stimuli is not None and stimuli.poll() is None:
+                stimuli.terminate()
+                try:
+                    stimuli.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    stimuli.kill()
+                    stimuli.wait()
+            if ui.renderer is not None:
+                ui.renderer.close()
+            pygame.quit()
 
-        drain_bci(inbox, bci)
 
-        pad = read_pad(js)
-        if pad != ZERO:
-            pad_active_at = now
-        ch, source = mix(pad, bci.channels(now), pad_active_at, now)
-        if source == "PS4" and pad == ZERO:
-            bci.stop()  # pad is holding priority: don't let a stale pulse resume
-
-        if drone.flying:
-            drone.send_rc(ch)
-
-        if now >= next_battery:
-            try:
-                battery = drone.battery()
-            except Exception:
-                pass
-            next_battery = now + 3
-
-        draw(screen, fonts, drone, bci, ch, source, js, battery, note)
-        clock.tick(RATE)
-
-    drone.close()
-    inbox.close()
-    for k in kids:
-        k.terminate()
-    pygame.quit()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
